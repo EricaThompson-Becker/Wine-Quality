@@ -1,0 +1,225 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+<center> <h1> Wine Quality Prediction </h1> </center>
+<center>  <h3> [Erica Thompson-Becker] </h2> </center>
+<center> <h3> [TMU:CMTH 642] </h2> </center>
+---
+
+The dataset is related to the white variants of the Portuguese "Vinho Verde" wine. Taken from the UCI Machine Learning Repository, more information can be found at https://archive.ics.uci.edu/ml/datasets/Wine+Quality. 
+
+The goal of this project is to predict if the wine will pass or fail the quality test based on its chemical attributes. This will be achieved by using the logistic regression algorithm. Two models will be compared in this analysis, one using an unbalanced training set and one with a balanced training set. 
+
+Libraries
+```{r}
+library(corrplot)
+```
+
+## Data Preparation and Data Exploration
+
+```{r}
+#load data set 
+URL <- "http://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv"
+#read csv file 
+winedata <- read.csv(file = URL, sep = ";", header = TRUE, na.strings = c("","NA"))
+#check first 6 rows of data
+head(winedata)
+```
+```{r}
+#check for missing values (there are no missing values)
+sum(is.na(winedata))
+
+#check data types
+str(winedata)
+```
+```{r}
+#check the frequency distribution of wine quality
+#print the counts of the values 
+tab1 <- table(winedata$quality)
+barplot(tab1, col = 'red', main = 'Wine Quality Distribution', xlab = 'Wine Quality')
+
+```
+```{r}
+#look at the correlation between the attributes and quality 
+
+#create correlation matrix
+corr_matrix <- cor(winedata)
+
+#visualize correlation matrix as a colour
+corrplot(corr_matrix, method = 'color')
+
+#ph, sulfates, and alcohol have a positive correlation with quality 
+#all others have a negative correlation with quality
+
+#density and alcohol have a strong negative correlation 
+#density and residual sugar have strong positive correlation
+
+```
+
+This analysis uses binomial logistic regression, currently the data is separated into quality levels from 0-10. To preform the analysis the data must first be transformed into two quality levels; pass or fail. Levels 0-5 are assigned to fail, levels 6-10 are assigned to pass. Let 1 represent pass and 0 represent fail.
+
+```{r}
+#simply done by changing values greater than 5 to be 'pass' and 5 or lower to be fail
+winedata$quality <- ifelse(winedata$quality > 5, 1,0)
+```
+
+Normalizing the numeric attributes helps to ensure the scale of the values are similar, so that there is no loss of importance due to one attribute being on a higher scale. Here Min-Max Scale normalization is used. 
+
+```{r}
+#define the normalization function
+normalize <- function(x){
+  (x - min(x))/(max(x) - min(x))
+}
+
+#normalize the numeric attributes and create a new dataframe with the normalized data set 
+norm_data <- cbind(as.data.frame(lapply(winedata[1:11], normalize)),quality = winedata$quality)
+
+head(norm_data)
+```
+## Logistic Regression Analysis 
+
+To test the algorithm the data is split into two groups, a training set and a test set. The training set trains the algorithm using the attributes to find the likeliness of passing. The test set uses the attributes and determines if the wine sample will pass or not, this output is then compared to the actual values. Using this comparison we can determine the effectiveness of the algorithm. 
+
+### With unbalanced train set
+
+```{r}
+#there are much more pass values than fail values
+sum(norm_data$quality == 1)
+sum(norm_data$quality == 0)
+
+```
+```{r}
+#split data into train and test sets based on set.seed
+set.seed(123)
+ind <- sample(2, nrow(norm_data),replace=TRUE,prob = c(0.7,0.3))
+train <- norm_data[ind==1,]
+test <- norm_data[ind==2,]
+
+table(train$quality)
+table(test$quality)
+prop.table(table(train$quality))
+#proportion of fail to pass is much too low 
+#we want to make sure that the train sample is more even to increase the accuracy of the algorithm 
+
+```
+```{r}
+#preform logistic regression on ill proportioned data
+#define the logistic regression 
+lrm <- glm( quality ~ ., family = "binomial", data = train)
+
+summary(lrm)
+#calculate predicted values
+predicted <-predict(lrm, test, type = "response")
+
+```
+
+```{r}
+#display confusion matrix to test the effectiveness of the model
+#convert defaults with a probability greater than 0.5
+predicted_quality <- ifelse(predicted>= 0.5,1,0)
+
+#create confusion matrix with a table 
+ConfMatrix <- table(actual = test$quality,
+                    predicted = predicted_quality)
+ConfMatrix
+```
+
+```{r}
+#evaluate accuracy, sensitivity and specificity
+#Values
+TP <- as.integer(ConfMatrix[2,2]) #True Positive
+FP <- as.integer(ConfMatrix[1,2]) #False Positive
+TN <- as.integer(ConfMatrix[1,1]) #True Negative
+FN <- as.integer(ConfMatrix[2,1]) #False Negative
+
+#Accuracy
+#the number of correctly predicted wine quality 
+#divided by the total amount of wine tested
+
+accuracy <- (TP + TN)/(TP + FN + FP + TN)
+accuracy
+
+#Sensitivity 
+#number of correct predictions of passing wine 
+#divided by the total number of actually passing wine
+
+sensitivity <- TP / (TP+FN)
+sensitivity
+
+#Specificity 
+#the number of correctly predicted wines that fail 
+#by the number of wines that actually fail 
+specificity <- TN / (TN+FP)
+specificity
+```
+Looking at these evaluation metrics we can see that the model does a relatively good job of correctly predicting the outcome of the wine quality test. Although, the sensitivity is high (89.9%), while the specificity is low (50.5%). This means that the model is good at correctly predicting that a wine will pass but bad at correctly determining if the wine will fail the test. This is most likely due to the unbalanced training set that was used. This will be explored in the next section. 
+
+### With Balanced Train set
+
+By using a balanced number of pass/fail cases, the model should do a better job at classifying the data into the correct categories. 
+```{r}
+#use simple downsampling to reduce the number of values of passes to have an equal number of fail and pass values
+
+#separate train values into pass = 1, fail = 0
+train_fail <- train[train$quality == 0,]
+train_pass <-  train[train$quality == 1,]
+#take a random sample of the pass values to create a balanced train set 
+train_p <- train_pass[sample(nrow(train_pass),1140),]
+
+#combine the fail and pass values 
+train2 <- rbind(train_fail,train_p)
+
+table(train2$quality)
+
+```
+```{r}
+#preform logistic regression on balanced data
+#define the logistic regression 
+lrm2 <- glm( quality ~ ., family = "binomial", data = train2)
+#print the summary
+summary(lrm2)
+#calculate predicted values
+predicted2 <-predict(lrm2, test, type = "response")
+```
+```{r}
+#display confusion matrix to test the effectiveness of the balanced model
+#convert defaults with a probability greater than 0.5
+predicted_quality2 <- ifelse(predicted2>= 0.5,1,0)
+
+#create confusion matrix with a table 
+ConfMatrix2 <- table(actual = test$quality,
+                    predicted = predicted_quality2)
+ConfMatrix2
+```
+```{r}
+#evaluate accuracy, sensitivity and specificity
+#Values
+TP2 <- as.integer(ConfMatrix2[2,2]) #True Positive
+FP2 <- as.integer(ConfMatrix2[1,2]) #False Positive
+TN2 <- as.integer(ConfMatrix2[1,1]) #True Negative
+FN2 <- as.integer(ConfMatrix2[2,1]) #False Negative
+
+#Accuracy
+#the number of correctly predicted wine quality 
+#divided by the total amount of wine tested
+
+accuracy2 <- (TP2 + TN2)/(TP2 + FN2 + FP2 + TN2)
+accuracy2
+
+#Sensitivity 
+#number of correct predictions of passing wine 
+#divided by the total number of actually passing wine
+
+sensitivity2 <- TP2 / (TP2+FN2)
+sensitivity2
+
+#Specificity 
+#the number of correctly predicted wines that fail 
+#by the number of wines that actually fail 
+specificity2 <- TN2 / (TN2+FP2)
+specificity2
+```
+Comparing the balanced evaluation metrics to the unbalanced metrics, the accuracy is relatively the same, but the sensitivity is lower and the specificity is higher in the balanced model, this is what was expected. This model does a better job at correctly classifying a failed wine, but a moderately good job at correctly classifying a passing wine. Overall the balanced model does a better job at classifying the wine correctly into the fail or passing categories. 
